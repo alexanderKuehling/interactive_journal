@@ -1,0 +1,367 @@
+{
+  "name": "menmo_audio",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "audio-aufnahme",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1ad17441-2559-433a-ba52-ab67a0780881",
+      "name": "Webhook",
+      "webhookId": "f13b9a39-e260-41f4-8260-c39e92c5c638"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true\n}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "XXXXX"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "dcc23b75-0d0d-40ba-8f84-186df7e14080",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whisper:8000/v1/audio/transcriptions",
+        "sendQuery": true,
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        0
+      ],
+      "id": "110d6054-9853-408d-bf69-8f1a41b436d5",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "### ROLLE Du bist ein intelligenter Assistent für Sprachprotokolle. Dein Output ist striktes JSON.  ### ENTSCHEIDUNGSLOGIK & INHALT  1. TASKS (Strikter Filter) - Erstelle NUR DANN einen Task, wenn der Nutzer explizit eine Aufgabe fordert (Signalwörter: \"Aufgabe\", \"ToDo\", \"Erinnere mich\", \"Ich muss\", \"Planen\"). - Wenn der Nutzer nur über Möglichkeiten oder Ideen spricht, ist das KEIN Task -> Packe es in die Summary. - Fasse zusammengehörige Schritte in EINER Aufgabe zusammen. - Beschreibung: Detailliert, aber ohne Sonderzeichen (nur Punkt, Komma, Leerzeichen). - Kategorien: [ \"Trading\", \"GENERAL\", \"UNI\", \"BrickDNN\", \"Layer/Voicy\"]. Wähle zwingend eine.  2. KI_ANTWORTEN (Proaktiv & Korrigierend) - Extrahiere nicht nur direkte Fragen, sondern erkenne auch Wissenslücken. - WICHTIG: Wenn der Nutzer eine faktisch falsche Aussage trifft, erstelle einen Eintrag hier. (Frage: \"Korrektur zu [Thema]\", Antwort: \"Richtigstellung...\"). - Sei ausführlich und hilfreich (max. 15 Sätze).  3. SUMMARY (Erweitert) - Schreibe eine detaillierte Zusammenfassung des Gesprochenen. - Ergänze den Inhalt aktiv um Tipps, Best Practices oder strategische Ratschläge zum besprochenen Thema. - Der Text soll eigenständigen Mehrwert bieten (Consultant-Stil).  ### OUTPUT REGELN - Gib NUR das JSON-Objekt zurück. - Keine Markdown-Formatierung (kein ```json ... ```), kein Text davor/danach. - Valides JSON ist zwingend.  ### JSON STRUKTUR {   \"summary\": \"String (Ausführlich + Tipps)\",   \"tasks\": [     {       \"task\": \"Titel\",       \"Beschreibung\": \"String\",       \"Status\": \"To Do\",       \"Kategorie\": \"String\",       \"deadline\": \"String oder null\"     }   ],   \"ki_antworten\": [     {       \"frage\": \"String (oder erkannte Wissenslücke/Fehler)\",       \"antwort\": \"String\"     }   ] }"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        672,
+        0
+      ],
+      "id": "01b1bfb9-16b1-4c27-aa01-473e60e49345",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "mistral-large-latest",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        672,
+        224
+      ],
+      "id": "1220f846-d9a1-48c0-b6d7-4b370b74139e",
+      "name": "Mistral Cloud Chat Model",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "Vux6eCF1f4UpEBf1",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  // Sicherstellen, dass wir einen String haben (manchmal kommt es als Objekt an)\n  let rawText = typeof item.json.text === 'object' \n                ? JSON.stringify(item.json.text) \n                : item.json.text;\n\n  // Wenn kein Text da ist, Fehler ausgeben\n  if (!rawText) {\n      return { json: { error: \"Input is empty\" } };\n  }\n\n  try {\n    // SCHRITT 1: Versuch, direkt zu parsen (falls es schon sauber ist)\n    const parsedData = JSON.parse(rawText);\n    return { json: parsedData };\n    \n  } catch (e1) {\n    // SCHRITT 2: Wenn direktes Parsen fehlschlägt -> Bereinigen (Extraction)\n    try {\n      // Finde den Index des ersten '{' oder '['\n      const firstOpen = rawText.search(/[{[]/);\n      \n      // Finde den Index des LETZTEN '}' oder ']'\n      const lastCloseBrace = rawText.lastIndexOf('}');\n      const lastCloseBracket = rawText.lastIndexOf(']');\n      const lastClose = Math.max(lastCloseBrace, lastCloseBracket);\n\n      // Wenn wir gültige Start- und Endpunkte haben\n      if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {\n        \n        // Schneide alles aus, was zwischen der ersten und letzten Klammer steht\n        const cleanJson = rawText.substring(firstOpen, lastClose + 1);\n        \n        const parsedData = JSON.parse(cleanJson);\n        return { json: parsedData };\n        \n      } else {\n        throw new Error(\"No JSON brackets found\");\n      }\n      \n    } catch (e2) {\n      // Wenn auch das Bereinigen fehlschlägt, gib das Original zur Analyse zurück\n      return {\n        json: {\n          error: \"Parsing failed\",\n          message: e2.message,\n          original_text: rawText\n        }\n      };\n    }\n  }\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        0
+      ],
+      "id": "4ad7014c-7e3c-4e34-9545-313073f50822",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "tasks",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        -256
+      ],
+      "id": "76bd3ebf-7ab8-4135-8e28-5d231c5fcb49",
+      "name": "Split Out1"
+    },
+    {
+      "parameters": {
+        "content": "## Tasks\n\n",
+        "height": 192,
+        "width": 672,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1248,
+        -304
+      ],
+      "typeVersion": 1,
+      "id": "d44c658b-ddfb-40b0-8c3e-9b31abe1d006",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "649e0bfe-deb0-4382-a09d-9603e17d445c",
+          "mode": "list",
+          "cachedResultName": "Task List",
+          "cachedResultUrl": "https://www.notion.so/649e0bfedeb04382a09d9603e17d445c"
+        },
+        "title": "={{ $json.task }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Kategorie|select",
+              "selectValue": "={{ $json.Kategorie }}"
+            },
+            {
+              "key": "Status|select",
+              "selectValue": "To Do"
+            },
+            {
+              "key": "Automatisiert|checkbox",
+              "checkboxValue": true
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{ $json.Beschreibung.substring(0,1999)}}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "textContent": "={{ $json.Beschreibung.length>1999? $json.Beschreibung.substring(1999,3999):''}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1488,
+        -256
+      ],
+      "id": "abaadf48-f938-41d8-959e-8bc8787f2dcb",
+      "name": "Create a database page",
+      "credentials": {
+        "notionApi": {
+          "id": "iqabEwWb6JbcdWC8",
+          "name": "Privater Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "XXXXX",
+        "subject": "=Mnemo: {{ $now.format('yyyy-MM-dd-HH-mm')}}",
+        "message": "={{ $json.emailHtml }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1616,
+        0
+      ],
+      "id": "aeba280c-3773-4f5b-bb7d-5ab9589a74b2",
+      "name": "Send a message",
+      "webhookId": "72e6fc02-852a-473f-9ead-fb76ab01094f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Enk8f32nXgR5aC0H",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  const data = item.json;\n  \n  // 1. Header & Zusammenfassung\n  let emailBody = `<h2>Zusammenfassung</h2>`;\n  emailBody += `<p>${data.summary}</p>`;\n  emailBody += `<hr>`;\n\n  // 2. KI-Antworten (Wissen)\n  if (data.ki_antworten && data.ki_antworten.length > 0) {\n    emailBody += `<h2>Antworten auf deine Fragen</h2>`;\n    data.ki_antworten.forEach(qa => {\n      emailBody += `<p><strong>F: ${qa.frage}</strong><br>`;\n      emailBody += `A: ${qa.antwort}</p>`;\n    });\n    emailBody += `<hr>`;\n  }\n  if (data.tasks && data.tasks.length > 0) {\n    emailBody += `<h2>Erfasste Aufgaben</h2><ul>`;\n    data.tasks.forEach(t => {\n      emailBody += `<li>[${t.Kategorie}] <strong>${t.task}</strong> (Status: ${t.Status})</li>`;\n    });\n    emailBody += `</ul>`;\n  }\n\n  // Rückgabe an den nächsten Node (z.B. Gmail oder Outlook)\n  return {\n    json: {\n      emailSubject: `Protokoll: ${data.summary.substring(0, 40)}...`,\n      emailHtml: emailBody,\n      kategorie: data.tasks[0]?.Kategorie || \"GENERAL\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        0
+      ],
+      "id": "1e722e57-f309-46d7-a324-67cd3dd6dca7",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Cloud Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Split Out1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out1": {
+      "main": [
+        [
+          {
+            "node": "Create a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "21bb0b75-3ea5-4a12-89ca-b18338a03198",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e63c148f26d1798de17c29f0cfd3959f1c666188d633a963373895bff639a199"
+  },
+  "id": "k8zbRVLGHgQT3eSO0jtCB",
+  "tags": []
+}

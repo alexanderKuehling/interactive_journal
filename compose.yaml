@@ -1,0 +1,37 @@
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Europe/Berlin
+      - TZ=Europe/Berlin
+      - WEBHOOK_URL=https://n8n.alexanderkuehling.de/
+      - N8N_PAYLOAD_SIZE_MAX=50
+    volumes:
+      - n8n_data:/home/node/.n8n
+    links:
+      - ollama
+      - whisper
+
+
+
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whisper
+    restart: always
+    environment:
+      - WHISPER_MODEL=medium
+      - WHISPER_PORT=8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - whisper_cache:/root/.cache/huggingface
+
+volumes:
+  n8n_data:
+  ollama_storage:
+  whisper_cache:

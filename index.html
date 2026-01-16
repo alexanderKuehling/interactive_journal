@@ -1,55 +1,168 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Audio Recorder</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="favicon.svg">
+
+    <title>Mnemo </title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #f0f2f5; margin: 0; }
+        .container { background: white; padding: 2rem; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
+        
+        #controls { min-height: 60px; display: flex; align-items: center; justify-content: center; margin: 20px 0; }
+
+        button { padding: 15px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; transition: background 0.3s; }
+        
+        #btn-record { background-color: #e74c3c; color: white; }
+        #btn-record:hover { background-color: #c0392b; }
+        
+        #btn-stop { background-color: #34495e; color: white; display: none; /* Standardmäßig ausgeblendet */ }
+        #btn-stop.recording { animation: pulse 1.5s infinite; background-color: #c0392b; }
+        
+        #status { color: #555; font-weight: bold; min-height: 1.2em; }
+        .error { color: red; border: 1px solid red; padding: 10px; background: #fee; font-size: 0.9em; margin-top: 15px; border-radius: 5px; display: none; }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.7); }
+            70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(192, 57, 43, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(192, 57, 43, 0); }
+        }
+    </style>
 </head>
 <body>
-  <button id="start">Start</button>
-  <button id="stop" disabled>Stop</button>
-  <p id="status"></p>
 
-  <script>
-    let recorder;
-    let chunks = [];
+<div class="container">
+    <h2>🎙️ Sprachnotiz</h2>
+    
+    <div id="controls">
+        <button id="btn-record">Aufnahme starten</button>
+        <button id="btn-stop" class="recording">Stopp & Senden</button>
+    </div>
+    
+    <p id="status">Bereit...</p>
+    <div id="error-log" class="error"></div>
+</div>
 
-    const startBtn = document.getElementById('start');
-    const stopBtn = document.getElementById('stop');
+<script>
+    const WEBHOOK_URL = 'https://n8n.alexanderkuehling.de/webhook/audio-aufnahme'; 
+
+    let mediaRecorder;
+    let audioChunks = [];
+    let mimeType; 
+
+    const btnRecord = document.getElementById('btn-record');
+    const btnStop = document.getElementById('btn-stop');
     const status = document.getElementById('status');
+    const errorLog = document.getElementById('error-log');
 
-    startBtn.onclick = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recorder = new MediaRecorder(stream);
-      chunks = [];
+    function showError(msg) {
+        console.error(msg);
+        status.innerText = "Fehler!";
+        errorLog.style.display = 'block';
+        errorLog.innerText = msg;
+        // Reset Buttons im Fehlerfall
+        btnRecord.style.display = 'block';
+        btnStop.style.display = 'none';
+    }
 
-      recorder.ondataavailable = e => chunks.push(e.data);
+    function getSupportedMimeType() {
+        const types = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav'];
+        for (const type of types) {
+            if (MediaRecorder.isTypeSupported(type)) return type;
+        }
+        return ''; 
+    }
 
-      recorder.start();
-      status.textContent = 'Recording...';
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
+    // Upload Logik
+    async function uploadAudio(blob) {
+        status.innerText = 'Sende Daten... ⏳';
+        
+        // Beide Buttons ausblenden während Upload
+        btnRecord.style.display = 'none';
+        btnStop.style.display = 'none';
+
+        const formData = new FormData();
+        let ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm';
+        formData.append('data', blob, `recording.${ext}`); 
+
+        try {
+            const response = await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
+            if (response.ok) {
+                status.innerText = '✅ Gesendet!';
+            } else {
+                showError('Server-Fehler: ' + response.status);
+            }
+        } catch (error) {
+            showError('Netzwerk-Fehler. Check Konsole.');
+        } finally {
+            audioChunks = [];
+            
+            // Nach Abschluss (oder Fehler) Start-Button wieder zeigen
+            setTimeout(() => {
+                if(!errorLog.innerText && status.innerText.includes('Gesendet')) {
+                     status.innerText = 'Bereit für neue Aufnahme';
+                }
+                btnStop.style.display = 'none';
+                btnRecord.style.display = 'block';
+            }, 2000); // Kurze Pause, damit man "Gesendet" lesen kann
+        }
+    }
+
+    // --- START CLICK ---
+    btnRecord.onclick = async () => {
+        errorLog.style.display = 'none';
+        errorLog.innerText = '';
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showError("Browser unterstützt kein Audio-Recording (HTTPS prüfen!).");
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mimeType = getSupportedMimeType();
+            
+            if (!mimeType) {
+                showError("Kein unterstütztes Audio-Format.");
+                return;
+            }
+
+            mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+            
+            mediaRecorder.onstop = async () => {
+                // Stream beenden (roter Punkt im Tab weg)
+                stream.getTracks().forEach(track => track.stop());
+                
+                const audioBlob = new Blob(audioChunks, { type: mimeType });
+                await uploadAudio(audioBlob);
+            };
+
+            mediaRecorder.start();
+            status.innerText = 'Aufnahme läuft...';
+            
+            // BUTTON SWAP
+            btnRecord.style.display = 'none';
+            btnStop.style.display = 'block';
+
+        } catch (err) {
+            showError("Mikrofon-Zugriff fehlgeschlagen: " + err.message);
+        }
     };
 
-    stopBtn.onclick = async () => {
-      recorder.stop();
-      status.textContent = 'Uploading...';
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-
-      recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        const form = new FormData();
-        form.append('audio', blob, 'audio.webm');
-
-        await fetch('http://localhost:8000/process-audio', {
-          method: 'POST',
-          body: form
-        });
-
-        status.textContent = 'Done';
-      };
+    // --- STOP CLICK ---
+    btnStop.onclick = () => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            // Button sofort ausblenden, damit man sieht, dass etwas passiert
+            btnStop.style.display = 'none';
+            status.innerText = 'Verarbeite...';
+        }
     };
-  </script>
+</script>
+
 </body>
 </html>
